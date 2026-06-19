@@ -1,0 +1,11 @@
+# Archivos de entorno
+.env
+
+# Archivos de base de datos
+*.db
+*.sqlite3
+
+# Entornos virtuales de Python
+venv/
+__pycache__/
+.DS_Store

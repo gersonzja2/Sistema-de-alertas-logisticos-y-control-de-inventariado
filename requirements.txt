@@ -3,3 +3,4 @@ uvicorn
 sqlalchemy
 resend
 python-dotenv
+jinja2

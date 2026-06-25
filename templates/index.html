@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Sistema inteligente de control de inventariado y alertas logísticas para optimización de stock y órdenes de compra automáticas.">
+    <title>Core Logística - Control de Inventario</title>
+    <!-- Google Fonts: Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+        <div class="logo-container">
+            <i data-lucide="box" class="logo-icon"></i>
+            <h2>Logística Core</h2>
+        </div>
+        <nav class="nav-menu">
+            <button id="btn-nav-dashboard" class="nav-item active" onclick="mostrarSeccion('dashboard')">
+                <i data-lucide="layout-dashboard"></i> <span>Dashboard</span>
+            </button>
+            <button id="btn-nav-ingreso" class="nav-item" onclick="mostrarSeccion('ingreso')">
+                <i data-lucide="arrow-down-left"></i> <span>Ingreso (RF04)</span>
+            </button>
+            <button id="btn-nav-salida" class="nav-item" onclick="mostrarSeccion('salida')">
+                <i data-lucide="arrow-up-right"></i> <span>Salida (RF01)</span>
+            </button>
+        </nav>
+        <div class="sidebar-footer">
+            <span class="status-indicator online"></span>
+            <span>Sistema Activo</span>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+        <!-- Header -->
+        <header class="main-header">
+            <div class="header-title">
+                <h1 id="page-title">Panel de Control</h1>
+                <p class="subtitle">Monitoreo de SKUs y alertas críticas en tiempo real</p>
+            </div>
+            <div class="user-profile">
+                <div class="avatar">G</div>
+                <span class="user-name">Gerente de Operaciones</span>
+            </div>
+        </header>
+
+        <!-- Dashboard Section -->
+        <section id="dashboard" class="panel activo">
+            <div class="kpi-container">
+                <div class="kpi-card" id="kpi-card-total">
+                    <div class="kpi-header">
+                        <h3>Total SKUs</h3>
+                        <i data-lucide="archive" class="kpi-icon blue"></i>
+                    </div>
+                    <p id="kpi-total" class="kpi-value">0</p>
+                    <p class="kpi-subtext">Productos registrados</p>
+                </div>
+                <div class="kpi-card critico" id="kpi-card-criticos">
+                    <div class="kpi-header">
+                        <h3>Alertas Críticas</h3>
+                        <i data-lucide="alert-triangle" class="kpi-icon red"></i>
+                    </div>
+                    <p id="kpi-criticos" class="kpi-value">0</p>
+                    <p class="kpi-subtext">Stock bajo o nulo</p>
+                </div>
+            </div>
+
+            <div class="dashboard-grid">
+                <div class="content-card">
+                    <div class="card-header">
+                        <h3><i data-lucide="bell"></i> Últimas Alertas Generadas</h3>
+                        <button class="btn-refresh" onclick="cargarDashboard()" title="Actualizar datos">
+                            <i data-lucide="rotate-cw"></i> Actualizar
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <ul id="lista-alertas" class="lista-oscura">
+                            <!-- Alertas dinámicas -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ingreso Section -->
+        <section id="ingreso" class="panel">
+            <div class="content-card form-card">
+                <div class="card-header">
+                    <h3><i data-lucide="arrow-down-to-line"></i> Recepción de Mercancía</h3>
+                    <p class="card-desc">Registra el ingreso de inventario para un SKU existente o nuevo.</p>
+                </div>
+                <div class="card-body">
+                    <div class="formulario">
+                        <div class="input-group">
+                            <label for="in-sku">Código SKU</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="barcode" class="input-icon"></i>
+                                <input type="text" id="in-sku" placeholder="Ej: SKU-100">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="in-cant">Cantidad Recibida</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="plus-circle" class="input-icon"></i>
+                                <input type="number" id="in-cant" min="1" placeholder="Ej: 50">
+                            </div>
+                        </div>
+                        <button id="btn-ingreso" onclick="procesarTransaccion('ingreso')" class="btn-primary">
+                            <i data-lucide="save"></i> Registrar Ingreso
+                        </button>
+                        <p id="msg-ingreso" class="mensaje"></p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Salida Section -->
+        <section id="salida" class="panel">
+            <div class="content-card form-card">
+                <div class="card-header">
+                    <h3><i data-lucide="arrow-up-from-line"></i> Despacho / Punto de Venta (POS)</h3>
+                    <p class="card-desc">Procesa salidas de stock y genera alertas automáticas de reposición.</p>
+                </div>
+                <div class="card-body">
+                    <div class="formulario">
+                        <div class="input-group">
+                            <label for="out-sku">Código SKU</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="barcode" class="input-icon"></i>
+                                <input type="text" id="out-sku" placeholder="Ej: SKU-100">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="out-cant">Cantidad a Retirar</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="minus-circle" class="input-icon"></i>
+                                <input type="number" id="out-cant" min="1" placeholder="Ej: 10">
+                            </div>
+                        </div>
+                        <button id="btn-salida" onclick="procesarTransaccion('salida')" class="btn-danger">
+                            <i data-lucide="truck"></i> Procesar Salida
+                        </button>
+                        <p id="msg-salida" class="mensaje"></p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/js/script.js"></script>
+    <script>
+        // Inicializar iconos de Lucide
+        lucide.createIcons();
+    </script>
+</body>
+</html>

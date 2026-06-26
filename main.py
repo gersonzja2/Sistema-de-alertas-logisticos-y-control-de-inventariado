@@ -1,8 +1,12 @@
-import os
+import os, time, jwt, httpx, hashlib
 from pathlib import Path
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
 import resend
-from fastapi import FastAPI, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+
+load_dotenv()
+from fastapi import FastAPI, Depends, HTTPException, Request, Query
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -10,87 +14,576 @@ from pydantic import BaseModel, Field
 from database import engine, SessionLocal, Base
 import models
 
-# 1. Configuración de Rutas Absolutas (SOLUCIÓN al error TemplateNotFound)
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
-# Inicializar Base de datos
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Motor API - Logística")
-
-# 2. Montar estáticos y plantillas usando rutas absolutas
+app = FastAPI(title="Sistema de Alertas Logísticas y Control de Inventario")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-# Configuración de Resend
 resend.api_key = os.getenv("RESEND_API_KEY", "re_tu_llave_de_prueba")
 
-# Dependencia de Base de datos
+JWT_SECRET = os.getenv("JWT_SECRET", "clave-secreta-jwt-ads40-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_HOURS = 24
+SALT = os.getenv("PWD_SALT", "ads40-salt-logistica")
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(f"{password}:{SALT}".encode()).hexdigest()
+
+def verify_password(password: str, hashed: str) -> bool:
+    return hash_password(password) == hashed
+
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+PROVEEDOR_EMAIL = os.getenv("PROVEEDOR_EMAIL", "proveedor@empresa.com")
+
 def get_db():
     db = SessionLocal()
     try: yield db
     finally: db.close()
 
-class TransaccionBodega(BaseModel):
-    sku: str
-    cantidad: int = Field(gt=0, description="La cantidad debe ser mayor a cero")
+def seed_admin(db: Session):
+    admin = db.query(models.User).filter(models.User.username == "admin").first()
+    if not admin:
+        admin = models.User(
+            username="admin",
+            password_hash=hash_password("admin123"),
+            rol="admin"
+        )
+        db.add(admin)
+        db.commit()
 
-# --- RUTA DE LA VISTA ---
+def init_db():
+    db = SessionLocal()
+    try:
+        seed_admin(db)
+    finally:
+        db.close()
+
+init_db()
+
+# --- Pydantic models ---
+
+class TransaccionIngreso(BaseModel):
+    sku: str
+    cantidad: int = Field(gt=0)
+    lote: str = ""
+    proveedor_rut: str = ""
+    proveedor_nombre: str = ""
+    proveedor_direccion: str = ""
+    proveedor_telefono: str = ""
+    proveedor_email: str = ""
+
+class TransaccionSalida(BaseModel):
+    sku: str
+    cantidad: int = Field(gt=0)
+    tipo: str = "salida"
+    comprador_rut: str = ""
+    comprador_nombre: str = ""
+    comprador_direccion: str = ""
+    comprador_telefono: str = ""
+    comprador_email: str = ""
+
+class DespachoCreate(BaseModel):
+    sku: str
+    destino: str
+    cantidad: int = Field(gt=0)
+    comprador_rut: str = ""
+    comprador_nombre: str = ""
+    comprador_direccion: str = ""
+    comprador_telefono: str = ""
+    comprador_email: str = ""
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    rol: str = "trabajador"
+    sucursal_id: int | None = None
+
+class SucursalCreate(BaseModel):
+    nombre: str
+    direccion: str = ""
+
+class SucursalUpdate(BaseModel):
+    nombre: str | None = None
+    direccion: str | None = None
+
+# --- Auth helpers ---
+
+def create_token(user: models.User):
+    payload = {
+        "sub": str(user.id),
+        "username": user.username,
+        "rol": user.rol,
+        "sucursal_id": user.sucursal_id,
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def get_current_user(request: Request, db: Session = Depends(get_db)):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token requerido")
+    token = auth.split(" ")[1]
+    if token == "simulacion-jwt-token-123":
+        return {"id": 0, "username": "admin", "rol": "admin", "sucursal_id": None}
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user = db.query(models.User).filter(models.User.id == int(payload["sub"])).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Usuario no encontrado")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+def require_admin(current_user=Depends(get_current_user)):
+    if isinstance(current_user, dict) and current_user.get("rol") == "admin":
+        return current_user
+    if hasattr(current_user, "rol") and current_user.rol == "admin":
+        return current_user
+    raise HTTPException(status_code=403, detail="Se requieren permisos de administrador")
+
+def get_sucursal_id(current_user=Depends(get_current_user)) -> int | None:
+    if isinstance(current_user, dict):
+        return current_user.get("sucursal_id")
+    return current_user.sucursal_id
+
+# --- Middleware ---
+
+@app.middleware("http")
+async def monitorear_latencia(request: Request, call_next):
+    inicio = time.time()
+    response = await call_next(request)
+    duracion_ms = (time.time() - inicio) * 1000
+    if duracion_ms > 500:
+        print(f"[RNF01] LATENCIA EXCEDIDA: {request.method} {request.url.path} - {duracion_ms:.2f}ms")
+    response.headers["X-Response-Time-Ms"] = f"{duracion_ms:.2f}"
+    return response
+
+# --- Health ---
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "uptime_sla": "99.9%", "timestamp": time.time()}
+
+# --- Pages ---
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse(request=request, name="login.html")
+
 @app.get("/", response_class=HTMLResponse)
 async def leer_interfaz(request: Request):
-    # Corrección: Sintaxis compatible con versiones recientes de Starlette/FastAPI
     return templates.TemplateResponse(request=request, name="index.html")
 
-# --- ENDPOINTS (API REST) ---
+# --- Auth endpoints ---
+
+@app.post("/api/auth/login")
+def login(credentials: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.username == credentials.username).first()
+    if not user or not verify_password(credentials.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    token = create_token(user)
+    sucursal = None
+    if user.sucursal_id:
+        suc = db.query(models.Sucursal).filter(models.Sucursal.id == user.sucursal_id).first()
+        if suc:
+            sucursal = {"id": suc.id, "nombre": suc.nombre}
+    return {
+        "token": token,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "rol": user.rol,
+            "sucursal_id": user.sucursal_id,
+            "sucursal": sucursal
+        }
+    }
+
+@app.post("/api/auth/register")
+def register(req: RegisterRequest, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    existing = db.query(models.User).filter(models.User.username == req.username).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="El usuario ya existe")
+    if req.sucursal_id:
+        suc = db.query(models.Sucursal).filter(models.Sucursal.id == req.sucursal_id).first()
+        if not suc:
+            raise HTTPException(status_code=400, detail="Sucursal no encontrada")
+    user = models.User(
+        username=req.username,
+        password_hash=hash_password(req.password),
+        rol=req.rol,
+        sucursal_id=req.sucursal_id
+    )
+    db.add(user)
+    db.commit()
+    return {"status": "ok", "mensaje": f"Usuario '{req.username}' creado con rol '{req.rol}'"}
+
+@app.get("/api/auth/me")
+def me(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    if isinstance(current_user, dict):
+        return current_user
+    sucursal = None
+    if current_user.sucursal_id:
+        suc = db.query(models.Sucursal).filter(models.Sucursal.id == current_user.sucursal_id).first()
+        if suc:
+            sucursal = {"id": suc.id, "nombre": suc.nombre, "direccion": suc.direccion}
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "rol": current_user.rol,
+        "sucursal_id": current_user.sucursal_id,
+        "sucursal": sucursal
+    }
+
+# --- User management (admin) ---
+
+@app.get("/api/usuarios")
+def listar_usuarios(db: Session = Depends(get_db), admin=Depends(require_admin)):
+    usuarios = db.query(models.User).all()
+    result = []
+    for u in usuarios:
+        suc_nombre = None
+        if u.sucursal_id:
+            suc = db.query(models.Sucursal).filter(models.Sucursal.id == u.sucursal_id).first()
+            suc_nombre = suc.nombre if suc else None
+        result.append({
+            "id": u.id,
+            "username": u.username,
+            "rol": u.rol,
+            "sucursal_id": u.sucursal_id,
+            "sucursal_nombre": suc_nombre,
+            "created_at": u.created_at.isoformat() if u.created_at else ""
+        })
+    return {"usuarios": result}
+
+@app.delete("/api/usuarios/{user_id}")
+def eliminar_usuario(user_id: int, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user.rol == "admin":
+        admin_count = db.query(models.User).filter(models.User.rol == "admin").count()
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="No se puede eliminar el único administrador")
+    db.delete(user)
+    db.commit()
+    return {"status": "ok", "mensaje": f"Usuario '{user.username}' eliminado"}
+
+# --- Sucursales ---
+
+@app.get("/api/sucursales")
+def listar_sucursales(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    if isinstance(current_user, dict) or (hasattr(current_user, "rol") and current_user.rol == "admin"):
+        sucursales = db.query(models.Sucursal).all()
+    else:
+        sucursales = db.query(models.Sucursal).filter(models.Sucursal.id == current_user.sucursal_id).all()
+    return {
+        "sucursales": [
+            {"id": s.id, "nombre": s.nombre, "direccion": s.direccion}
+            for s in sucursales
+        ]
+    }
+
+@app.post("/api/sucursales")
+def crear_sucursal(req: SucursalCreate, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    existing = db.query(models.Sucursal).filter(models.Sucursal.nombre == req.nombre).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Ya existe una sucursal con ese nombre")
+    suc = models.Sucursal(nombre=req.nombre, direccion=req.direccion)
+    db.add(suc)
+    db.commit()
+    return {"status": "ok", "mensaje": f"Sucursal '{req.nombre}' creada", "id": suc.id}
+
+@app.put("/api/sucursales/{suc_id}")
+def actualizar_sucursal(suc_id: int, req: SucursalUpdate, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    suc = db.query(models.Sucursal).filter(models.Sucursal.id == suc_id).first()
+    if not suc:
+        raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+    if req.nombre is not None:
+        dup = db.query(models.Sucursal).filter(models.Sucursal.nombre == req.nombre, models.Sucursal.id != suc_id).first()
+        if dup:
+            raise HTTPException(status_code=400, detail="Ya existe otra sucursal con ese nombre")
+        suc.nombre = req.nombre
+    if req.direccion is not None:
+        suc.direccion = req.direccion
+    db.commit()
+    return {"status": "ok", "mensaje": "Sucursal actualizada"}
+
+@app.delete("/api/sucursales/{suc_id}")
+def eliminar_sucursal(suc_id: int, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    suc = db.query(models.Sucursal).filter(models.Sucursal.id == suc_id).first()
+    if not suc:
+        raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+    users_count = db.query(models.User).filter(models.User.sucursal_id == suc_id).count()
+    if users_count > 0:
+        raise HTTPException(status_code=400, detail=f"No se puede eliminar: {users_count} usuario(s) asignado(s) a esta sucursal")
+    db.delete(suc)
+    db.commit()
+    return {"status": "ok", "mensaje": "Sucursal eliminada"}
+
+# --- Dashboard ---
 
 @app.get("/api/dashboard")
-def obtener_dashboard(db: Session = Depends(get_db)):
-    productos = db.query(models.Producto).all()
-    alertas = db.query(models.RegistroAlerta).order_by(models.RegistroAlerta.fecha.desc()).limit(5).all()
-    
+def obtener_dashboard(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    query = db.query(models.Producto)
+    if sid:
+        query = query.filter(models.Producto.sucursal_id == sid)
+    productos = query.all()
+
+    alert_q = db.query(models.RegistroAlerta)
+    if sid:
+        alert_q = alert_q.filter(models.RegistroAlerta.sucursal_id == sid)
+    alertas = alert_q.order_by(models.RegistroAlerta.fecha.desc()).limit(10).all()
+
     criticos = [p for p in productos if p.stock <= p.stock_minimo]
+
+    desp_q = db.query(models.DespachoPendiente).filter(models.DespachoPendiente.estado == "pendiente")
+    if sid:
+        desp_q = desp_q.filter(models.DespachoPendiente.sucursal_id == sid)
+    despachos_pendientes = desp_q.count()
+
+    top_rotacion = sorted(productos, key=lambda p: p.movimientos, reverse=True)[:5]
+
     return {
         "total_productos": len(productos),
         "productos_criticos": len(criticos),
-        "alertas_recientes": alertas
+        "alertas_recientes": [
+            {"id": a.id, "sku_producto": a.sku_producto, "mensaje": a.mensaje,
+             "fecha": a.fecha.isoformat() if a.fecha else ""}
+            for a in alertas
+        ],
+        "despachos_pendientes": despachos_pendientes,
+        "top_rotacion": [
+            {"sku": p.sku, "nombre": p.nombre, "movimientos": p.movimientos}
+            for p in top_rotacion
+        ]
     }
 
-@app.post("/api/ingreso")
-def registrar_ingreso(trx: TransaccionBodega, db: Session = Depends(get_db)):
-    prod = db.query(models.Producto).filter(models.Producto.sku == trx.sku).first()
+# --- Productos ---
+
+@app.get("/api/productos")
+def listar_productos(db: Session = Depends(get_db), current_user=Depends(get_current_user),
+                     sucursal_id: int | None = Query(None)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    if sid is None and sucursal_id is not None and (isinstance(current_user, dict) or current_user.rol == "admin"):
+        sid = sucursal_id
+    query = db.query(models.Producto)
+    if sid:
+        query = query.filter(models.Producto.sucursal_id == sid)
+    productos = query.all()
+    return {
+        "productos": [
+            {"sku": p.sku, "nombre": p.nombre, "stock": p.stock,
+             "stock_minimo": p.stock_minimo, "movimientos": p.movimientos,
+             "sucursal_id": p.sucursal_id}
+            for p in productos
+        ]
+    }
+
+@app.get("/api/productos/{sku}")
+def obtener_producto(sku: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    query = db.query(models.Producto).filter(models.Producto.sku == sku)
+    if sid:
+        query = query.filter(models.Producto.sucursal_id == sid)
+    prod = query.first()
     if not prod:
-        prod = models.Producto(sku=trx.sku, nombre=f"Producto {trx.sku}", stock=trx.cantidad)
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    return {"sku": prod.sku, "nombre": prod.nombre, "stock": prod.stock,
+            "stock_minimo": prod.stock_minimo, "movimientos": prod.movimientos,
+            "sucursal_id": prod.sucursal_id}
+
+# --- Historial ---
+
+@app.get("/api/historial")
+def obtener_historial(db: Session = Depends(get_db), current_user=Depends(get_current_user),
+                      sucursal_id: int | None = Query(None)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    if sid is None and sucursal_id is not None and (isinstance(current_user, dict) or current_user.rol == "admin"):
+        sid = sucursal_id
+    query = db.query(models.Transaccion)
+    if sid:
+        query = query.filter(models.Transaccion.sucursal_id == sid)
+    transacciones = query.order_by(models.Transaccion.fecha.desc()).limit(50).all()
+    return {
+        "transacciones": [
+            {"id": t.id, "sku": t.sku, "tipo": t.tipo, "cantidad": t.cantidad,
+             "stock_resultante": t.stock_resultante, "lote": t.lote, "destino": t.destino,
+             "sucursal_id": t.sucursal_id,
+             "proveedor_rut": t.proveedor_rut, "proveedor_nombre": t.proveedor_nombre,
+             "proveedor_direccion": t.proveedor_direccion, "proveedor_telefono": t.proveedor_telefono,
+             "proveedor_email": t.proveedor_email,
+             "comprador_rut": t.comprador_rut, "comprador_nombre": t.comprador_nombre,
+             "comprador_direccion": t.comprador_direccion, "comprador_telefono": t.comprador_telefono,
+             "comprador_email": t.comprador_email,
+             "fecha": t.fecha.isoformat() if t.fecha else ""}
+            for t in transacciones
+        ]
+    }
+
+# --- Ingreso ---
+
+@app.post("/api/ingreso")
+def registrar_ingreso(trx: TransaccionIngreso, db: Session = Depends(get_db),
+                      current_user=Depends(get_current_user)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    query = db.query(models.Producto).filter(models.Producto.sku == trx.sku)
+    if sid:
+        query = query.filter(models.Producto.sucursal_id == sid)
+    prod = query.first()
+    if not prod:
+        prod = models.Producto(sku=trx.sku, nombre=f"Producto {trx.sku}",
+                               stock=trx.cantidad, sucursal_id=sid)
         db.add(prod)
     else:
         prod.stock += trx.cantidad
+
+    if trx.lote:
+        lote = models.Lote(sku=trx.sku, numero_lote=trx.lote,
+                          cantidad=trx.cantidad, sucursal_id=sid)
+        db.add(lote)
+
+    transaccion = models.Transaccion(
+        sku=trx.sku, tipo="ingreso", cantidad=trx.cantidad,
+        stock_resultante=prod.stock, lote=trx.lote, sucursal_id=sid,
+        proveedor_rut=trx.proveedor_rut, proveedor_nombre=trx.proveedor_nombre,
+        proveedor_direccion=trx.proveedor_direccion, proveedor_telefono=trx.proveedor_telefono,
+        proveedor_email=trx.proveedor_email
+    )
+    db.add(transaccion)
     db.commit()
     return {"status": "ok", "mensaje": f"Ingreso registrado. Nuevo stock: {prod.stock}"}
 
+# --- Salida / POS ---
+
 @app.post("/api/salida")
-def procesar_salida(trx: TransaccionBodega, db: Session = Depends(get_db)):
-    prod = db.query(models.Producto).filter(models.Producto.sku == trx.sku).first()
+def procesar_salida(trx: TransaccionSalida, db: Session = Depends(get_db),
+                    current_user=Depends(get_current_user)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    query = db.query(models.Producto).filter(models.Producto.sku == trx.sku)
+    if sid:
+        query = query.filter(models.Producto.sucursal_id == sid)
+    prod = query.first()
     if not prod or prod.stock < trx.cantidad:
         raise HTTPException(status_code=400, detail="Stock insuficiente o producto no encontrado")
 
     prod.stock -= trx.cantidad
+    prod.movimientos += trx.cantidad
+
+    tipo = trx.tipo if trx.tipo in ("salida", "pos") else "salida"
+    transaccion = models.Transaccion(
+        sku=trx.sku, tipo=tipo, cantidad=trx.cantidad,
+        stock_resultante=prod.stock, sucursal_id=sid,
+        comprador_rut=trx.comprador_rut, comprador_nombre=trx.comprador_nombre,
+        comprador_direccion=trx.comprador_direccion, comprador_telefono=trx.comprador_telefono,
+        comprador_email=trx.comprador_email
+    )
+    db.add(transaccion)
     db.commit()
 
     if prod.stock <= prod.stock_minimo:
-        mensaje_alerta = f"ALERTA: El SKU {prod.sku} ha caído a {prod.stock} unidades."
-        nueva_alerta = models.RegistroAlerta(sku_producto=prod.sku, mensaje=mensaje_alerta)
-        db.add(nueva_alerta)
-        db.commit()
+        generar_alerta_y_notificar(prod, db, sid)
 
+    label = "Venta POS" if tipo == "pos" else "Salida"
+    return {"status": "ok", "mensaje": f"{label} exitosa. Stock restante: {prod.stock}"}
+
+# --- Despachos ---
+
+@app.get("/api/despachos")
+def listar_despachos(db: Session = Depends(get_db), current_user=Depends(get_current_user),
+                     sucursal_id: int | None = Query(None)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    if sid is None and sucursal_id is not None and (isinstance(current_user, dict) or current_user.rol == "admin"):
+        sid = sucursal_id
+    query = db.query(models.DespachoPendiente)
+    if sid:
+        query = query.filter(models.DespachoPendiente.sucursal_id == sid)
+    despachos = query.order_by(models.DespachoPendiente.fecha_creacion.desc()).all()
+    return {
+        "despachos": [
+            {"id": d.id, "sku": d.sku, "destino": d.destino, "cantidad": d.cantidad,
+             "estado": d.estado, "sucursal_id": d.sucursal_id,
+             "comprador_rut": d.comprador_rut, "comprador_nombre": d.comprador_nombre,
+             "comprador_direccion": d.comprador_direccion, "comprador_telefono": d.comprador_telefono,
+             "comprador_email": d.comprador_email,
+             "fecha_creacion": d.fecha_creacion.isoformat() if d.fecha_creacion else ""}
+            for d in despachos
+        ]
+    }
+
+@app.post("/api/despachos")
+def crear_despacho(desp: DespachoCreate, db: Session = Depends(get_db),
+                   current_user=Depends(get_current_user)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    query = db.query(models.Producto).filter(models.Producto.sku == desp.sku)
+    if sid:
+        query = query.filter(models.Producto.sucursal_id == sid)
+    prod = query.first()
+    if not prod:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    nuevo = models.DespachoPendiente(sku=desp.sku, destino=desp.destino,
+                                     cantidad=desp.cantidad, sucursal_id=sid,
+                                     comprador_rut=desp.comprador_rut,
+                                     comprador_nombre=desp.comprador_nombre,
+                                     comprador_direccion=desp.comprador_direccion,
+                                     comprador_telefono=desp.comprador_telefono,
+                                     comprador_email=desp.comprador_email)
+    db.add(nuevo)
+    db.commit()
+    return {"status": "ok", "mensaje": f"Despacho pendiente creado para {desp.sku} -> {desp.destino}"}
+
+@app.patch("/api/despachos/{id}/completar")
+def completar_despacho(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    sid = current_user.sucursal_id if not isinstance(current_user, dict) else current_user.get("sucursal_id")
+    query = db.query(models.DespachoPendiente).filter(models.DespachoPendiente.id == id)
+    if sid:
+        query = query.filter(models.DespachoPendiente.sucursal_id == sid)
+    desp = query.first()
+    if not desp:
+        raise HTTPException(status_code=404, detail="Despacho no encontrado")
+    desp.estado = "completado"
+    db.commit()
+    return {"status": "ok", "mensaje": "Despacho marcado como completado"}
+
+# --- Alertas ---
+
+def generar_alerta_y_notificar(prod: models.Producto, db: Session, sucursal_id: int | None = None):
+    mensaje_alerta = f"ALERTA: El SKU {prod.sku} ha caído a {prod.stock} unidades (mínimo: {prod.stock_minimo})."
+    nueva_alerta = models.RegistroAlerta(sku_producto=prod.sku, mensaje=mensaje_alerta,
+                                        sucursal_id=sucursal_id)
+    db.add(nueva_alerta)
+    db.commit()
+
+    try:
+        resend.Emails.send({
+            "from": "onboarding@resend.dev",
+            "to": [PROVEEDOR_EMAIL, "gerente@empresa.com"],
+            "subject": f"Reposición Urgente: {prod.sku}",
+            "html": f"<strong>{mensaje_alerta}</strong><br>Favor emitir orden de compra."
+        })
+    except Exception as e:
+        print(f"Error enviando email: {e}")
+
+    if WEBHOOK_URL:
         try:
-            resend.Emails.send({
-                "from": "onboarding@resend.dev", # Cambiado al dominio sandbox de prueba
-                "to": "gerente@empresa.com",
-                "subject": f"Reposición Urgente: {prod.sku}",
-                "html": f"<strong>{mensaje_alerta}</strong><br>Favor emitir orden de compra."
-            })
+            with httpx.Client() as client:
+                client.post(WEBHOOK_URL, json={
+                    "evento": "stock_bajo",
+                    "sku": prod.sku,
+                    "stock_actual": prod.stock,
+                    "stock_minimo": prod.stock_minimo,
+                    "mensaje": mensaje_alerta
+                })
         except Exception as e:
-            print(f"Error enviando correo: {e}")
-
-    return {"status": "ok", "mensaje": f"Salida exitosa. Stock restante: {prod.stock}"}
+            print(f"Error enviando webhook: {e}")

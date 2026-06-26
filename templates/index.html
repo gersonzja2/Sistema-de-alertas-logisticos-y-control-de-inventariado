@@ -4,55 +4,169 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Sistema inteligente de control de inventariado y alertas logísticas para optimización de stock y órdenes de compra automáticas.">
-    <title>Core Logística - Control de Inventario</title>
-    <!-- Google Fonts: Outfit -->
+    <title>Sistema de Alertas Logísticas y Control de Inventario</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .nav-item.admin-only { border-left: 3px solid var(--danger); }
+        .user-badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:600; }
+        .badge-admin { background:rgba(239,68,68,0.15); color:#ef4444; }
+        .badge-trabajador { background:rgba(59,130,246,0.15); color:#3b82f6; }
+        .btn-sm { padding:6px 12px; font-size:0.8rem; border-radius:6px; cursor:pointer; border:none; font-weight:500; font-family:var(--font-sans); transition:var(--transition); }
+        .btn-sm-danger { background:rgba(239,68,68,0.15); color:#ef4444; }
+        .btn-sm-danger:hover { background:var(--danger); color:white; }
+        .btn-sm-edit { background:rgba(59,130,246,0.15); color:#3b82f6; }
+        .btn-sm-edit:hover { background:var(--accent-blue); color:white; }
+        .admin-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+        @media(max-width:768px){ .admin-grid { grid-template-columns:1fr; } }
+        .btn-logout { background:transparent; border:1px solid var(--border-color); color:var(--text-secondary); padding:8px 14px; border-radius:8px; cursor:pointer; font-family:var(--font-sans); font-size:0.85rem; display:flex; align-items:center; gap:6px; transition:var(--transition); }
+        .btn-logout:hover { border-color:var(--danger); color:var(--danger); }
+        .sucursal-selector { padding:6px 10px; background:rgba(15,23,42,0.6); border:1px solid var(--border-color); border-radius:6px; color:white; font-family:var(--font-sans); font-size:0.85rem; }
+        .user-info-row { display:flex; align-items:center; gap:16px; }
+        .user-role-label { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-secondary); }
+        .select-wrapper { position:relative; display:flex; align-items:center; }
+        .select-wrapper select { width:100%; padding:12px 14px 12px 42px; background:rgba(15,23,42,0.6); border:1px solid var(--border-color); border-radius:8px; color:white; font-size:0.95rem; font-family:var(--font-sans); cursor:pointer; }
+        .select-wrapper select:focus { outline:none; border-color:var(--accent-blue); box-shadow:0 0 0 3px var(--accent-blue-glow); }
+        .select-wrapper i { position:absolute; left:14px; width:18px; height:18px; color:var(--text-secondary); pointer-events:none; }
+        .form-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+        @media(max-width:768px){ .form-row { grid-template-columns:1fr; } }
+        .inline-flex { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .tabla-datos td .inline-flex { justify-content:flex-end; }
+    </style>
 </head>
 <body>
-    <!-- Sidebar Navigation -->
     <aside class="sidebar">
         <div class="logo-container">
             <i data-lucide="box" class="logo-icon"></i>
-            <h2>Logística Core</h2>
+            <h2>Alertas Logísticas</h2>
         </div>
         <nav class="nav-menu">
-            <button id="btn-nav-dashboard" class="nav-item active" onclick="mostrarSeccion('dashboard')">
+            <button id="btn-nav-home" class="nav-item active" onclick="mostrarSeccion('home')">
+                <i data-lucide="home"></i> <span>Inicio</span>
+            </button>
+            <button id="btn-nav-dashboard" class="nav-item" onclick="mostrarSeccion('dashboard')">
                 <i data-lucide="layout-dashboard"></i> <span>Dashboard</span>
             </button>
+            <button id="btn-nav-stock" class="nav-item" onclick="mostrarSeccion('stock')">
+                <i data-lucide="package"></i> <span>Stock en Vivo</span>
+            </button>
             <button id="btn-nav-ingreso" class="nav-item" onclick="mostrarSeccion('ingreso')">
-                <i data-lucide="arrow-down-left"></i> <span>Ingreso (RF04)</span>
+                <i data-lucide="arrow-down-left"></i> <span>Ingreso</span>
             </button>
             <button id="btn-nav-salida" class="nav-item" onclick="mostrarSeccion('salida')">
-                <i data-lucide="arrow-up-right"></i> <span>Salida (RF01)</span>
+                <i data-lucide="arrow-up-right"></i> <span>Salida / POS</span>
             </button>
+            <button id="btn-nav-historial" class="nav-item" onclick="mostrarSeccion('historial')">
+                <i data-lucide="clock"></i> <span>Historial</span>
+            </button>
+            <button id="btn-nav-despachos" class="nav-item" onclick="mostrarSeccion('despachos')">
+                <i data-lucide="truck"></i> <span>Despachos</span>
+            </button>
+            <div id="admin-nav-section" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color);">
+                <div style="font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;padding:0 16px 8px;">Administración</div>
+                <button id="btn-nav-usuarios" class="nav-item admin-only" onclick="mostrarSeccion('usuarios')">
+                    <i data-lucide="users"></i> <span>Usuarios</span>
+                </button>
+                <button id="btn-nav-sucursales" class="nav-item admin-only" onclick="mostrarSeccion('sucursales')">
+                    <i data-lucide="building-2"></i> <span>Sucursales</span>
+                </button>
+            </div>
         </nav>
-        <div class="sidebar-footer">
-            <span class="status-indicator online"></span>
-            <span>Sistema Activo</span>
+        <div class="sidebar-footer" style="flex-direction:column;align-items:stretch;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <span class="status-indicator online"></span>
+                <span>Sistema Activo</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:0.8rem;" id="sidebar-user-info">
+                <i data-lucide="user" style="width:14px;height:14px;"></i>
+                <span id="sidebar-username">---</span>
+                <span id="sidebar-role-badge" class="user-badge badge-trabajador" style="margin-left:auto;"></span>
+            </div>
         </div>
     </aside>
 
-    <!-- Main Content Area -->
     <main class="main-content">
-        <!-- Header -->
         <header class="main-header">
             <div class="header-title">
                 <h1 id="page-title">Panel de Control</h1>
-                <p class="subtitle">Monitoreo de SKUs y alertas críticas en tiempo real</p>
+                <p class="subtitle" id="page-subtitle">Monitoreo de SKUs, rotación y alertas críticas en tiempo real</p>
             </div>
-            <div class="user-profile">
-                <div class="avatar">G</div>
-                <span class="user-name">Gerente de Operaciones</span>
+            <div class="user-info-row" id="header-user-area">
+                <div id="sucursal-selector-container" style="display:none;">
+                    <select id="admin-sucursal-filter" class="sucursal-selector" onchange="onSucursalFilterChange()">
+                        <option value="">Todas las sucursales</option>
+                    </select>
+                </div>
+                <div class="user-profile">
+                    <div class="avatar" id="user-avatar-letter">A</div>
+                    <div>
+                        <span class="user-name" id="header-username">admin</span>
+                        <div class="user-role-label" id="header-role-label">Administrador</div>
+                    </div>
+                </div>
+                <button class="btn-logout" onclick="logout()">
+                    <i data-lucide="log-out"></i> Salir
+                </button>
             </div>
         </header>
 
-        <!-- Dashboard Section -->
-        <section id="dashboard" class="panel activo">
+        <!-- Home / Welcome -->
+        <section id="home" class="panel activo">
+            <div id="home-content" style="display:flex;flex-direction:column;gap:24px;flex:1;">
+                <div class="content-card" style="border-left:4px solid var(--accent-blue);">
+                    <div class="card-body" style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+                        <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,var(--accent-blue),#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:1.8rem;font-weight:700;color:white;" id="welcome-avatar">A</div>
+                        <div style="flex:1;">
+                            <h2 style="font-size:1.5rem;margin-bottom:4px;" id="welcome-greeting">¡Bienvenido!</h2>
+                            <p style="color:var(--text-secondary);font-size:0.95rem;" id="welcome-subtitle">Has iniciado sesión como <strong id="welcome-role-label">Administrador</strong></p>
+                            <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap;">
+                                <span id="welcome-role-badge" class="user-badge badge-admin" style="font-size:0.85rem;padding:4px 14px;">Admin</span>
+                                <span id="welcome-sucursal-badge" style="display:none;" class="user-badge badge-trabajador" style="font-size:0.85rem;padding:4px 14px;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="welcome-actions" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;"></div>
+                <div id="first-sucursal-setup" style="display:none;">
+                    <div class="content-card" style="border-left:4px solid var(--danger);">
+                        <div class="card-header">
+                            <h3><i data-lucide="building-2"></i> Configuración Inicial</h3>
+                        </div>
+                        <div class="card-body">
+                            <p style="color:var(--text-secondary);margin-bottom:16px;">No hay sucursales registradas. Crea la primera para comenzar a operar.</p>
+                            <div class="formulario" style="max-width:500px;">
+                                <div class="form-row">
+                                    <div class="input-group">
+                                        <label>Nombre de la Sucursal</label>
+                                        <div class="input-wrapper">
+                                            <i data-lucide="building-2" class="input-icon"></i>
+                                            <input type="text" id="wizard-suc-nombre" placeholder="Ej: Sucursal Central">
+                                        </div>
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Dirección</label>
+                                        <div class="input-wrapper">
+                                            <i data-lucide="map-pin" class="input-icon"></i>
+                                            <input type="text" id="wizard-suc-direccion" placeholder="Ej: Av. Principal 123">
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onclick="crearPrimeraSucursal()" class="btn-primary">
+                                    <i data-lucide="check-circle"></i> Crear Primera Sucursal
+                                </button>
+                                <p id="msg-wizard-sucursal" class="mensaje"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Dashboard -->
+        <section id="dashboard" class="panel">
             <div class="kpi-container">
                 <div class="kpi-card" id="kpi-card-total">
                     <div class="kpi-header">
@@ -62,7 +176,7 @@
                     <p id="kpi-total" class="kpi-value">0</p>
                     <p class="kpi-subtext">Productos registrados</p>
                 </div>
-                <div class="kpi-card critico" id="kpi-card-criticos">
+                <div class="kpi-card" id="kpi-card-criticos">
                     <div class="kpi-header">
                         <h3>Alertas Críticas</h3>
                         <i data-lucide="alert-triangle" class="kpi-icon red"></i>
@@ -70,39 +184,70 @@
                     <p id="kpi-criticos" class="kpi-value">0</p>
                     <p class="kpi-subtext">Stock bajo o nulo</p>
                 </div>
+                <div class="kpi-card" id="kpi-card-despachos">
+                    <div class="kpi-header">
+                        <h3>Despachos Pend.</h3>
+                        <i data-lucide="truck" class="kpi-icon orange"></i>
+                    </div>
+                    <p id="kpi-despachos" class="kpi-value">0</p>
+                    <p class="kpi-subtext">Pendientes de entrega</p>
+                </div>
             </div>
-
             <div class="dashboard-grid">
                 <div class="content-card">
                     <div class="card-header">
                         <h3><i data-lucide="bell"></i> Últimas Alertas Generadas</h3>
-                        <button class="btn-refresh" onclick="cargarDashboard()" title="Actualizar datos">
-                            <i data-lucide="rotate-cw"></i> Actualizar
-                        </button>
+                        <button class="btn-refresh" onclick="cargarDashboard()"><i data-lucide="rotate-cw"></i> Actualizar</button>
                     </div>
-                    <div class="card-body">
-                        <ul id="lista-alertas" class="lista-oscura">
-                            <!-- Alertas dinámicas -->
-                        </ul>
+                    <div class="card-body"><ul id="lista-alertas" class="lista-oscura"></ul></div>
+                </div>
+                <div class="content-card">
+                    <div class="card-header">
+                        <h3><i data-lucide="trending-up"></i> Productos Mayor Rotación</h3>
                     </div>
+                    <div class="card-body"><ul id="lista-rotacion" class="lista-oscura"></ul></div>
                 </div>
             </div>
         </section>
 
-        <!-- Ingreso Section -->
+        <!-- Stock en Vivo -->
+        <section id="stock" class="panel">
+            <div class="content-card">
+                <div class="card-header">
+                    <h3><i data-lucide="package"></i> Stock Actual de Productos</h3>
+                    <button class="btn-refresh" onclick="cargarStockVivo()"><i data-lucide="rotate-cw"></i> Actualizar</button>
+                </div>
+                <div class="card-body" style="overflow-x:auto;">
+                    <table id="tabla-stock" class="tabla-datos">
+                        <thead>
+                            <tr>
+                                <th>SKU</th>
+                                <th>Nombre</th>
+                                <th>Stock Actual</th>
+                                <th>Stock Mínimo</th>
+                                <th>Movimientos</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ingreso -->
         <section id="ingreso" class="panel">
             <div class="content-card form-card">
                 <div class="card-header">
                     <h3><i data-lucide="arrow-down-to-line"></i> Recepción de Mercancía</h3>
-                    <p class="card-desc">Registra el ingreso de inventario para un SKU existente o nuevo.</p>
+                    <p class="card-desc">Registra el ingreso de inventario para un SKU existente o nuevo. Soporta escaneo de código de barras y registro por lotes.</p>
                 </div>
                 <div class="card-body">
                     <div class="formulario">
                         <div class="input-group">
-                            <label for="in-sku">Código SKU</label>
+                            <label for="in-sku">Código SKU (escanear o escribir)</label>
                             <div class="input-wrapper">
                                 <i data-lucide="barcode" class="input-icon"></i>
-                                <input type="text" id="in-sku" placeholder="Ej: SKU-100">
+                                <input type="text" id="in-sku" placeholder="Ej: SKU-100" autofocus>
                             </div>
                         </div>
                         <div class="input-group">
@@ -112,7 +257,59 @@
                                 <input type="number" id="in-cant" min="1" placeholder="Ej: 50">
                             </div>
                         </div>
-                        <button id="btn-ingreso" onclick="procesarTransaccion('ingreso')" class="btn-primary">
+                        <div class="input-group">
+                            <label for="in-lote">Número de Lote (opcional)</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="tag" class="input-icon"></i>
+                                <input type="text" id="in-lote" placeholder="Ej: LOTE-2024-001">
+                            </div>
+                        </div>
+                        <details style="margin-top:16px;" id="in-proveedor-details">
+                            <summary style="cursor:pointer;color:var(--accent-blue);font-weight:500;font-size:0.85rem;">
+                                <i data-lucide="truck" style="width:14px;height:14px;vertical-align:middle;"></i>
+                                Datos del Proveedor (opcional)
+                            </summary>
+                            <div class="form-row" style="margin-top:12px;">
+                                <div class="input-group">
+                                    <label>RUT Proveedor</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="fingerprint" class="input-icon"></i>
+                                        <input type="text" id="in-prov-rut" placeholder="Ej: 12.345.678-9">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Nombre Proveedor</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="building-2" class="input-icon"></i>
+                                        <input type="text" id="in-prov-nombre" placeholder="Ej: Distribuidora XYZ Ltda.">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="input-group">
+                                    <label>Dirección</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="map-pin" class="input-icon"></i>
+                                        <input type="text" id="in-prov-direccion" placeholder="Ej: Av. Siempre Viva 742">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Teléfono</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="phone" class="input-icon"></i>
+                                        <input type="text" id="in-prov-telefono" placeholder="Ej: +56 9 1234 5678">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="input-group">
+                                <label>Email</label>
+                                <div class="input-wrapper">
+                                    <i data-lucide="mail" class="input-icon"></i>
+                                    <input type="email" id="in-prov-email" placeholder="Ej: contacto@proveedor.cl">
+                                </div>
+                            </div>
+                        </details>
+                        <button onclick="procesarTransaccion('ingreso')" class="btn-primary" style="margin-top:16px;">
                             <i data-lucide="save"></i> Registrar Ingreso
                         </button>
                         <p id="msg-ingreso" class="mensaje"></p>
@@ -121,12 +318,12 @@
             </div>
         </section>
 
-        <!-- Salida Section -->
+        <!-- Salida / POS -->
         <section id="salida" class="panel">
             <div class="content-card form-card">
                 <div class="card-header">
-                    <h3><i data-lucide="arrow-up-from-line"></i> Despacho / Punto de Venta (POS)</h3>
-                    <p class="card-desc">Procesa salidas de stock y genera alertas automáticas de reposición.</p>
+                    <h3><i data-lucide="arrow-up-from-line"></i> Despacho de Mercancía</h3>
+                    <p class="card-desc">Procesa salidas de inventario con cantidad seleccionable.</p>
                 </div>
                 <div class="card-body">
                     <div class="formulario">
@@ -144,10 +341,385 @@
                                 <input type="number" id="out-cant" min="1" placeholder="Ej: 10">
                             </div>
                         </div>
-                        <button id="btn-salida" onclick="procesarTransaccion('salida')" class="btn-danger">
+                        <details style="margin-top:16px;" id="out-comprador-details">
+                            <summary style="cursor:pointer;color:var(--accent-blue);font-weight:500;font-size:0.85rem;">
+                                <i data-lucide="user" style="width:14px;height:14px;vertical-align:middle;"></i>
+                                Datos del Comprador (opcional)
+                            </summary>
+                            <div class="form-row" style="margin-top:12px;">
+                                <div class="input-group">
+                                    <label>RUT Comprador</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="fingerprint" class="input-icon"></i>
+                                        <input type="text" id="out-comp-rut" placeholder="Ej: 12.345.678-9">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Nombre Comprador</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="user" class="input-icon"></i>
+                                        <input type="text" id="out-comp-nombre" placeholder="Ej: Juan Pérez">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="input-group">
+                                    <label>Dirección</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="map-pin" class="input-icon"></i>
+                                        <input type="text" id="out-comp-direccion" placeholder="Ej: Av. Principal 456">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Teléfono</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="phone" class="input-icon"></i>
+                                        <input type="text" id="out-comp-telefono" placeholder="Ej: +56 9 8765 4321">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="input-group">
+                                <label>Email</label>
+                                <div class="input-wrapper">
+                                    <i data-lucide="mail" class="input-icon"></i>
+                                    <input type="email" id="out-comp-email" placeholder="Ej: juan@email.cl">
+                                </div>
+                            </div>
+                        </details>
+                        <button onclick="procesarTransaccion('salida')" class="btn-danger" style="margin-top:16px;">
                             <i data-lucide="truck"></i> Procesar Salida
                         </button>
                         <p id="msg-salida" class="mensaje"></p>
+                    </div>
+                </div>
+            </div>
+            <div class="content-card form-card" style="margin-top:1.5rem;">
+                <div class="card-header">
+                    <h3><i data-lucide="shopping-cart"></i> Punto de Venta (POS) — Cantidad seleccionable</h3>
+                    <p class="card-desc">Venta por POS con cantidad variable por transacción.</p>
+                </div>
+                <div class="card-body">
+                    <div class="formulario">
+                        <div class="input-group">
+                            <label for="pos-sku">Código SKU</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="barcode" class="input-icon"></i>
+                                <input type="text" id="pos-sku" placeholder="Ej: SKU-100">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="pos-cant">Cantidad a Vender</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="shopping-cart" class="input-icon"></i>
+                                <input type="number" id="pos-cant" min="1" value="1" placeholder="Ej: 1">
+                            </div>
+                        </div>
+                        <details style="margin-top:16px;" id="pos-comprador-details">
+                            <summary style="cursor:pointer;color:var(--accent-blue);font-weight:500;font-size:0.85rem;">
+                                <i data-lucide="user" style="width:14px;height:14px;vertical-align:middle;"></i>
+                                Datos del Comprador (opcional)
+                            </summary>
+                            <div class="form-row" style="margin-top:12px;">
+                                <div class="input-group">
+                                    <label>RUT Comprador</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="fingerprint" class="input-icon"></i>
+                                        <input type="text" id="pos-comp-rut" placeholder="Ej: 12.345.678-9">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Nombre Comprador</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="user" class="input-icon"></i>
+                                        <input type="text" id="pos-comp-nombre" placeholder="Ej: Juan Pérez">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="input-group">
+                                    <label>Dirección</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="map-pin" class="input-icon"></i>
+                                        <input type="text" id="pos-comp-direccion" placeholder="Ej: Av. Principal 456">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Teléfono</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="phone" class="input-icon"></i>
+                                        <input type="text" id="pos-comp-telefono" placeholder="Ej: +56 9 8765 4321">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="input-group">
+                                <label>Email</label>
+                                <div class="input-wrapper">
+                                    <i data-lucide="mail" class="input-icon"></i>
+                                    <input type="email" id="pos-comp-email" placeholder="Ej: juan@email.cl">
+                                </div>
+                            </div>
+                        </details>
+                        <button onclick="procesarVentaPOS()" class="btn-primary" style="background:var(--accent);margin-top:16px;">
+                            <i data-lucide="shopping-cart"></i> Procesar Venta POS
+                        </button>
+                        <p id="msg-pos" class="mensaje"></p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Historial -->
+        <section id="historial" class="panel">
+            <div class="content-card">
+                <div class="card-header">
+                    <h3><i data-lucide="clock"></i> Historial de Transacciones</h3>
+                    <button class="btn-refresh" onclick="cargarHistorial()"><i data-lucide="rotate-cw"></i> Actualizar</button>
+                </div>
+                <div class="card-body" style="overflow-x:auto;">
+                    <table id="tabla-historial" class="tabla-datos">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>SKU</th>
+                                <th>Tipo</th>
+                                <th>Cantidad</th>
+                                <th>Stock Resultante</th>
+                                <th>Proveedor</th>
+                                <th>Comprador</th>
+                                <th>Detalle</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Despachos -->
+        <section id="despachos" class="panel">
+            <div class="content-card form-card" style="max-width:100%;">
+                <div class="card-header">
+                    <h3><i data-lucide="truck"></i> Gestión de Despachos Pendientes</h3>
+                    <p class="card-desc">Registra nuevos despachos y consulta el estado de las entregas.</p>
+                </div>
+                <div class="card-body">
+                    <div class="formulario" style="max-width:600px;">
+                        <div class="input-group">
+                            <label for="desp-sku">Código SKU</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="barcode" class="input-icon"></i>
+                                <input type="text" id="desp-sku" placeholder="Ej: SKU-100">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="desp-destino">Destino</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="map-pin" class="input-icon"></i>
+                                <input type="text" id="desp-destino" placeholder="Ej: Sucursal Norte">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="desp-cant">Cantidad</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="package" class="input-icon"></i>
+                                <input type="number" id="desp-cant" min="1" placeholder="Ej: 20">
+                            </div>
+                        </div>
+                        <details style="margin-top:16px;" id="desp-comprador-details">
+                            <summary style="cursor:pointer;color:var(--accent-blue);font-weight:500;font-size:0.85rem;">
+                                <i data-lucide="user" style="width:14px;height:14px;vertical-align:middle;"></i>
+                                Datos del Comprador (opcional)
+                            </summary>
+                            <div class="form-row" style="margin-top:12px;">
+                                <div class="input-group">
+                                    <label>RUT Comprador</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="fingerprint" class="input-icon"></i>
+                                        <input type="text" id="desp-comp-rut" placeholder="Ej: 12.345.678-9">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Nombre Comprador</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="user" class="input-icon"></i>
+                                        <input type="text" id="desp-comp-nombre" placeholder="Ej: Juan Pérez">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="input-group">
+                                    <label>Dirección</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="map-pin" class="input-icon"></i>
+                                        <input type="text" id="desp-comp-direccion" placeholder="Ej: Av. Principal 456">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Teléfono</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="phone" class="input-icon"></i>
+                                        <input type="text" id="desp-comp-telefono" placeholder="Ej: +56 9 8765 4321">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="input-group">
+                                <label>Email</label>
+                                <div class="input-wrapper">
+                                    <i data-lucide="mail" class="input-icon"></i>
+                                    <input type="email" id="desp-comp-email" placeholder="Ej: juan@email.cl">
+                                </div>
+                            </div>
+                        </details>
+                        <button onclick="crearDespacho()" class="btn-primary" style="margin-top:16px;">
+                            <i data-lucide="plus-circle"></i> Registrar Despacho
+                        </button>
+                        <p id="msg-despacho" class="mensaje"></p>
+                    </div>
+                    <div style="margin-top:24px;overflow-x:auto;">
+                        <table id="tabla-despachos" class="tabla-datos">
+                            <thead>
+                            <tr>
+                                <th>SKU</th>
+                                <th>Destino</th>
+                                <th>Cantidad</th>
+                                <th>Comprador</th>
+                                <th>Estado</th>
+                                <th>Fecha</th>
+                                <th>Acción</th>
+                            </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Admin: Usuarios -->
+        <section id="usuarios" class="panel">
+            <div class="content-card" style="max-width:100%;">
+                <div class="card-header">
+                    <h3><i data-lucide="users"></i> Gestión de Usuarios</h3>
+                    <button class="btn-refresh" onclick="cargarUsuarios()"><i data-lucide="rotate-cw"></i> Actualizar</button>
+                </div>
+                <div class="card-body">
+                    <div class="admin-grid">
+                        <div>
+                            <h4 style="margin-bottom:16px;color:var(--text-secondary);">Crear Nuevo Usuario</h4>
+                            <div class="formulario">
+                                <div class="form-row">
+                                    <div class="input-group">
+                                        <label>Usuario</label>
+                                        <div class="input-wrapper">
+                                            <i data-lucide="user" class="input-icon"></i>
+                                            <input type="text" id="reg-username" placeholder="Nombre de usuario">
+                                        </div>
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Contraseña</label>
+                                        <div class="input-wrapper">
+                                            <i data-lucide="lock" class="input-icon"></i>
+                                            <input type="password" id="reg-password" placeholder="Contraseña">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="input-group">
+                                        <label>Rol</label>
+                                        <div class="select-wrapper">
+                                            <i data-lucide="shield"></i>
+                                            <select id="reg-rol">
+                                                <option value="trabajador">Trabajador</option>
+                                                <option value="admin">Administrador</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Sucursal (solo trabajador)</label>
+                                        <div class="select-wrapper">
+                                            <i data-lucide="building-2"></i>
+                                            <select id="reg-sucursal">
+                                                <option value="">Seleccionar sucursal...</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onclick="crearUsuario()" class="btn-primary">
+                                    <i data-lucide="user-plus"></i> Crear Usuario
+                                </button>
+                                <p id="msg-register" class="mensaje"></p>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 style="margin-bottom:16px;color:var(--text-secondary);">Usuarios Registrados</h4>
+                            <div style="overflow-x:auto;">
+                                <table id="tabla-usuarios" class="tabla-datos">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Usuario</th>
+                                            <th>Rol</th>
+                                            <th>Sucursal</th>
+                                            <th>Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Admin: Sucursales -->
+        <section id="sucursales" class="panel">
+            <div class="content-card" style="max-width:100%;">
+                <div class="card-header">
+                    <h3><i data-lucide="building-2"></i> Gestión de Sucursales / Bodegas</h3>
+                    <button class="btn-refresh" onclick="cargarSucursalesAdmin()"><i data-lucide="rotate-cw"></i> Actualizar</button>
+                </div>
+                <div class="card-body">
+                    <div class="admin-grid">
+                        <div>
+                            <h4 style="margin-bottom:16px;color:var(--text-secondary);">Nueva Sucursal</h4>
+                            <div class="formulario">
+                                <div class="input-group">
+                                    <label>Nombre</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="building-2" class="input-icon"></i>
+                                        <input type="text" id="suc-nombre" placeholder="Ej: Sucursal Norte">
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Dirección</label>
+                                    <div class="input-wrapper">
+                                        <i data-lucide="map-pin" class="input-icon"></i>
+                                        <input type="text" id="suc-direccion" placeholder="Ej: Av. Principal 123">
+                                    </div>
+                                </div>
+                                <button onclick="crearSucursal()" class="btn-primary">
+                                    <i data-lucide="plus-circle"></i> Crear Sucursal
+                                </button>
+                                <p id="msg-sucursal" class="mensaje"></p>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 style="margin-bottom:16px;color:var(--text-secondary);">Sucursales Registradas</h4>
+                            <div style="overflow-x:auto;">
+                                <table id="tabla-sucursales" class="tabla-datos">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Nombre</th>
+                                            <th>Dirección</th>
+                                            <th>Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -156,8 +728,42 @@
 
     <script src="/static/js/script.js"></script>
     <script>
-        // Inicializar iconos de Lucide
         lucide.createIcons();
+        async function crearDespacho() {
+            const sku = document.getElementById('desp-sku').value.trim().toUpperCase();
+            const destino = document.getElementById('desp-destino').value.trim();
+            const cantidad = parseInt(document.getElementById('desp-cant').value);
+            const msg = document.getElementById('msg-despacho');
+            if (!sku || !destino || isNaN(cantidad) || cantidad <= 0) {
+                mostrarMensaje(msg, "Error: Todos los campos son requeridos.", "var(--danger)");
+                return;
+            }
+            try {
+                msg.innerText = "Registrando...";
+                msg.style.color = "var(--text-secondary)";
+                const resp = await fetch('/api/despachos', { method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuth() },
+                    body: JSON.stringify({
+                        sku, destino, cantidad,
+                        comprador_rut: document.getElementById('desp-comp-rut')?.value?.trim() || '',
+                        comprador_nombre: document.getElementById('desp-comp-nombre')?.value?.trim() || '',
+                        comprador_direccion: document.getElementById('desp-comp-direccion')?.value?.trim() || '',
+                        comprador_telefono: document.getElementById('desp-comp-telefono')?.value?.trim() || '',
+                        comprador_email: document.getElementById('desp-comp-email')?.value?.trim() || ''
+                    })
+                });
+                const result = await resp.json();
+                if (resp.ok) {
+                    mostrarMensaje(msg, result.mensaje, "var(--success)");
+                    document.getElementById('desp-sku').value = '';
+                    document.getElementById('desp-destino').value = '';
+                    document.getElementById('desp-cant').value = '';
+                    ['desp-comp-rut','desp-comp-nombre','desp-comp-direccion','desp-comp-telefono','desp-comp-email'
+                    ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+                    cargarDespachos();
+                } else { mostrarMensaje(msg, `Error: ${result.detail || 'Error'}`, "var(--danger)"); }
+            } catch(e) { mostrarMensaje(msg, "Error de conexión.", "var(--danger)"); }
+        }
     </script>
 </body>
 </html>

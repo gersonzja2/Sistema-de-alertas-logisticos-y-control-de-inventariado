@@ -4,3 +4,6 @@ sqlalchemy
 resend
 python-dotenv
 jinja2
+httpx
+pytest
+pyjwt

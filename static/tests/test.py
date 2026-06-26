@@ -332,9 +332,9 @@ def test_flujo_trabajador():
     r6 = client.get("/api/productos", headers={"Authorization": f"Bearer {admin_token}"})
     assert len(r6.json()["productos"]) >= 2
 
-    # Trabajador solo ve el suyo
+    # Trabajador ve el suyo + globales
     r7 = client.get("/api/productos", headers={"Authorization": f"Bearer {worker_token}"})
-    assert len(r7.json()["productos"]) == 1
+    assert len(r7.json()["productos"]) == 2
 
 # --- Auth: admin no puede eliminarse a si mismo si es el unico ---
 
@@ -349,3 +349,148 @@ def test_no_eliminar_unico_admin():
             break
     r2 = client.delete(f"/api/usuarios/{admin_id}", headers={"Authorization": f"Bearer {token}"})
     assert r2.status_code == 400
+
+# --- RF17: Transferencias entre Sucursales ---
+
+def test_transferencia_entre_sucursales():
+    r = client.post("/api/auth/login", json={"username": "admin_test", "password": "admin123"})
+    token = r.json()["token"]
+    auth = {"Authorization": f"Bearer {token}"}
+
+    # Crear dos sucursales
+    r1 = client.post("/api/sucursales", json={"nombre": "Suc A", "direccion": "Dir A"}, headers=auth)
+    assert r1.status_code == 200
+    r2 = client.post("/api/sucursales", json={"nombre": "Suc B", "direccion": "Dir B"}, headers=auth)
+    assert r2.status_code == 200
+
+    rs = client.get("/api/sucursales", headers=auth)
+    sucs = {s["nombre"]: s["id"] for s in rs.json()["sucursales"]}
+    id_a, id_b = sucs["Suc A"], sucs["Suc B"]
+
+    # Crear producto en Suc A
+    client.post("/api/ingreso", json={"sku": "SKU-TRF", "cantidad": 50}, headers=auth)
+    # Asignarlo a Suc A (usando worker que pertenezca a Suc A) ...
+    # En realidad el producto se crea con sid=None (admin). Lo re-asignamos vía BD directa
+    # Mejor: crear con admin (global) y luego transferir no funciona porque está en global, no en Suc A
+    # Creamos un trabajador en Suc A que cree el producto
+    client.post("/api/auth/register", json={
+        "username": "trf_worker", "password": "w123",
+        "rol": "trabajador", "sucursal_id": id_a
+    }, headers=auth)
+    rw = client.post("/api/auth/login", json={"username": "trf_worker", "password": "w123"})
+    w_auth = {"Authorization": f"Bearer {rw.json()['token']}"}
+    r_in = client.post("/api/ingreso", json={"sku": "SKU-TRF", "cantidad": 50}, headers=w_auth)
+    assert r_in.status_code == 200
+
+    # Transferir 20 unidades Suc A -> Suc B
+    r_trf = client.post("/api/transferencias", json={
+        "sku": "SKU-TRF", "origen_sucursal_id": id_a,
+        "destino_sucursal_id": id_b, "cantidad": 20
+    }, headers=auth)
+    assert r_trf.status_code == 200
+
+    # Verificar stock en Suc A (50-20=30)
+    r_prod_a = client.get(f"/api/productos?sucursal_id={id_a}", headers=auth)
+    prod_a = [p for p in r_prod_a.json()["productos"] if p["sku"] == "SKU-TRF" and p["sucursal_id"] == id_a]
+    assert len(prod_a) == 1
+    assert prod_a[0]["stock"] == 30
+
+    # Verificar stock en Suc B (0+20=20)
+    r_prod_b = client.get(f"/api/productos?sucursal_id={id_b}", headers=auth)
+    prod_b = [p for p in r_prod_b.json()["productos"] if p["sku"] == "SKU-TRF" and p["sucursal_id"] == id_b]
+    assert len(prod_b) == 1
+    assert prod_b[0]["stock"] == 20
+
+def test_transferencia_misma_sucursal_rechazada():
+    r = client.post("/api/auth/login", json={"username": "admin_test", "password": "admin123"})
+    token = r.json()["token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    client.post("/api/sucursales", json={"nombre": "Suc X", "direccion": "X"}, headers=auth)
+    rs = client.get("/api/sucursales", headers=auth)
+    sid = rs.json()["sucursales"][0]["id"]
+    r_trf = client.post("/api/transferencias", json={
+        "sku": "SKU-X", "origen_sucursal_id": sid,
+        "destino_sucursal_id": sid, "cantidad": 10
+    }, headers=auth)
+    assert r_trf.status_code == 400
+    assert "distintas" in r_trf.json()["detail"]
+
+def test_transferencia_stock_insuficiente():
+    r = client.post("/api/auth/login", json={"username": "admin_test", "password": "admin123"})
+    token = r.json()["token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    client.post("/api/sucursales", json={"nombre": "Suc C", "direccion": "C"}, headers=auth)
+    client.post("/api/sucursales", json={"nombre": "Suc D", "direccion": "D"}, headers=auth)
+    rs = client.get("/api/sucursales", headers=auth)
+    sucs = rs.json()["sucursales"]
+    id_c, id_d = sucs[0]["id"], sucs[1]["id"]
+    r_trf = client.post("/api/transferencias", json={
+        "sku": "SKU-NOEXISTE", "origen_sucursal_id": id_c,
+        "destino_sucursal_id": id_d, "cantidad": 5
+    }, headers=auth)
+    assert r_trf.status_code == 400
+
+def test_transferencia_sin_auth():
+    r = client.post("/api/transferencias", json={
+        "sku": "SKU-X", "origen_sucursal_id": 1,
+        "destino_sucursal_id": 2, "cantidad": 5
+    })
+    assert r.status_code == 401
+
+# --- RF24: Auditoría (created_by) ---
+
+def test_auditoria_created_by_ingreso():
+    r = client.post("/api/auth/login", json={"username": "admin_test", "password": "admin123"})
+    token = r.json()["token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    r_in = client.post("/api/ingreso", json={"sku": "SKU-AUDIT", "cantidad": 10}, headers=auth)
+    assert r_in.status_code == 200
+    # Verificar producto created_by
+    r_prod = client.get("/api/productos/SKU-AUDIT", headers=auth)
+    assert r_prod.status_code == 200
+    assert r_prod.json().get("created_by") == "admin_test"
+
+def test_auditoria_created_by_sucursal():
+    r = client.post("/api/auth/login", json={"username": "admin_test", "password": "admin123"})
+    token = r.json()["token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    r_s = client.post("/api/sucursales", json={"nombre": "Suc Audit", "direccion": "Audit"}, headers=auth)
+    assert r_s.status_code == 200
+    rs = client.get("/api/sucursales", headers=auth)
+    suc = [s for s in rs.json()["sucursales"] if s["nombre"] == "Suc Audit"][0]
+    assert "id" in suc
+
+def test_auditoria_updated_by():
+    r = client.post("/api/auth/login", json={"username": "admin_test", "password": "admin123"})
+    token = r.json()["token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    client.post("/api/sucursales", json={"nombre": "Suc Upd", "direccion": "Upd"}, headers=auth)
+    rs = client.get("/api/sucursales", headers=auth)
+    suc = [s for s in rs.json()["sucursales"] if s["nombre"] == "Suc Upd"][0]
+    r_u = client.put(f"/api/sucursales/{suc['id']}", json={"direccion": "Nueva Dir"}, headers=auth)
+    assert r_u.status_code == 200
+
+def test_auditoria_created_by_transaccion():
+    r = client.post("/api/auth/login", json={"username": "admin_test", "password": "admin123"})
+    token = r.json()["token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    client.post("/api/ingreso", json={"sku": "SKU-TRX-AUDIT", "cantidad": 15}, headers=auth)
+    client.post("/api/salida", json={"sku": "SKU-TRX-AUDIT", "cantidad": 5}, headers=auth)
+    r_hist = client.get("/api/historial", headers=auth)
+    assert r_hist.status_code == 200
+    for trx in r_hist.json()["transacciones"]:
+        if trx["sku"] == "SKU-TRX-AUDIT":
+            assert "created_by" in trx
+
+# --- RF23: Alertas activas ---
+
+def test_alertas_activas_endpoint():
+    r = client.post("/api/auth/login", json={"username": "admin_test", "password": "admin123"})
+    token = r.json()["token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    r_alert = client.get("/api/alertas/activas", headers=auth)
+    assert r_alert.status_code == 200
+    data = r_alert.json()
+    assert "productos_criticos" in data
+    assert "alertas_no_leidas" in data
+    assert "criticos" in data

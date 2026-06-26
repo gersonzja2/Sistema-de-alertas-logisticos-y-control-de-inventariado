@@ -8,6 +8,9 @@ class Sucursal(Base):
     nombre = Column(String, unique=True, index=True)
     direccion = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(String, default="")
+    updated_by = Column(String, default="")
+    updated_at = Column(DateTime, nullable=True)
 
 class User(Base):
     __tablename__ = "usuarios"
@@ -27,6 +30,8 @@ class Producto(Base):
     stock_minimo = Column(Integer, default=10)
     movimientos = Column(Integer, default=0)
     sucursal_id = Column(Integer, ForeignKey("sucursales.id"), nullable=True)
+    created_by = Column(String, default="")
+    updated_by = Column(String, default="")
 
 class Lote(Base):
     __tablename__ = "lotes"
@@ -46,6 +51,7 @@ class DespachoPendiente(Base):
     sucursal_id = Column(Integer, ForeignKey("sucursales.id"), nullable=True)
     estado = Column(String, default="pendiente")
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(String, default="")
     comprador_rut = Column(String, default="")
     comprador_nombre = Column(String, default="")
     comprador_direccion = Column(String, default="")
@@ -63,6 +69,7 @@ class Transaccion(Base):
     destino = Column(String, default="")
     sucursal_id = Column(Integer, ForeignKey("sucursales.id"), nullable=True)
     fecha = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(String, default="")
     proveedor_rut = Column(String, default="")
     proveedor_nombre = Column(String, default="")
     proveedor_direccion = Column(String, default="")
@@ -81,3 +88,5 @@ class RegistroAlerta(Base):
     sucursal_id = Column(Integer, ForeignKey("sucursales.id"), nullable=True)
     fecha = Column(DateTime, default=datetime.utcnow)
     mensaje = Column(String)
+    leida = Column(Boolean, default=False)
+    created_by = Column(String, default="")

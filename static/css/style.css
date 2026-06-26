@@ -384,6 +384,24 @@ body {
     color: var(--danger);
 }
 
+.user-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.badge-admin {
+    background-color: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+}
+
+.badge-trabajador {
+    background-color: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+}
+
 @media (max-width: 768px) {
     .tabla-datos {
         font-size: 0.8rem;

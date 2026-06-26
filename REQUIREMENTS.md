@@ -26,6 +26,10 @@
 | **RF14** | Interfaz Principal | ✅ | Ruta `GET /` — interfaz con 9 secciones navegables: Home, Dashboard, Stock en Vivo, Ingreso, Salida/POS, Historial, Despachos, Usuarios (admin), Sucursales (admin). Sidebar con navegación por rol: las secciones admin tienen borde rojo. Header con avatar, nombre, badge de rol, selector de sucursal (admin) y botón de salir. |
 | **RF15** | Wizard de Configuración Inicial | ✅ | En la sección Home, si el administrador no tiene sucursales registradas, se muestra un wizard para crear la primera sucursal. Incluye formulario con nombre y dirección, y validación de campos requeridos. |
 | **RF16** | Protección de Rutas | ✅ | Middleware `get_current_user()` en endpoints protegidos valida token JWT. `require_admin()` protege endpoints administrativos. Redirección a `/login` si no hay token. |
+| **RF17** | Transferencias entre Sucursales | ✅ | `POST /api/transferencias` — mueve stock entre sucursales. Solo admin. Descuenta de origen, suma en destino. Registra transacciones `transferencia_salida` y `transferencia_entrada`. Valida que origen y destino sean distintos, stock suficiente, y sucursales existentes. |
+| **RF20** | Exportación CSV | ✅ | Botones "Exportar CSV" en tablas de Stock y Historial. Generan archivo CSV con BOM UTF-8 desde los datos visible en la tabla (respeta filtro por sucursal). Implementado 100% en frontend vía Blob y descarga. |
+| **RF23** | Notificaciones en UI | ✅ | `GET /api/alertas/activas` — endpoint que retorna conteo de productos críticos + alertas no leídas. Badge numerado rojo en el botón "Stock en Vivo" del sidebar. Se actualiza cada 30s automáticamente. Al hacer clic en Stock se ven los productos críticos resaltados. |
+| **RF24** | Pista de Auditoría | ✅ | Campos `created_by`/`created_at` en Producto, Transaccion, DespachoPendiente, RegistroAlerta. Campos `updated_by`/`updated_at` en Producto y Sucursal. Los endpoints propagan `current_user.username`. `GET /api/productos/{sku}` y `GET /api/productos` exponen `created_by` y `updated_by`. |
 
 ---
 
@@ -40,7 +44,7 @@
 | **RNF05** | Stack Tecnológico | ✅ | **Backend**: Python 3.12+ / FastAPI / Uvicorn. **ORM**: SQLAlchemy 2.0. **Auth**: PyJWT. **Email**: Resend SDK. **Frontend**: HTML5 + CSS3 + JavaScript vanilla. **Iconos**: Lucide (vía CDN). **Fuente**: Outfit (Google Fonts). **Tests**: pytest + httpx (TestClient). |
 | **RNF06** | Diseño UI/UX | ✅ | Tema oscuro completo (slate blue). Diseño responsive (grid adaptable a móvil). Animaciones y transiciones suaves (fadeIn, slideIn, hover effects). Tarjetas con efecto glassmorphism (backdrop-filter blur). KPIs con gradientes y sombras. Tablas con hover y resaltado de filas críticas. Sidebar colapsable en mobile. |
 | **RNF07** | Mantenibilidad y Código Fuente | ✅ | Código modular: `main.py` (endpoints + lógica), `models.py` (ORM), `database.py` (conexión), `templates/` (HTML), `static/js/` (frontend), `static/css/` (estilos). Seed automático de admin al iniciar. Comentarios descriptivos en secciones clave. Variables de entorno para configuración sensible. |
-| **RNF08** | Cobertura de Pruebas | ✅ | 33 tests automatizados con pytest. Cobertura: autenticación (login, JWT, register admin-only), roles y permisos (admin vs trabajador), CRUD de sucursales (crear, duplicado, actualizar, eliminar con usuarios), flujo completo de trabajador (login → ingreso → filtro por sucursal), stock (ingreso, salida, POS, alertas), protección de último admin, validaciones (cantidad inválida), dashboard, health check, latencia header. |
+| **RNF08** | Cobertura de Pruebas | ✅ | 42 tests automatizados con pytest. Cobertura: autenticación (login, JWT, register admin-only), roles y permisos (admin vs trabajador), CRUD de sucursales (crear, duplicado, actualizar, eliminar con usuarios), flujo completo de trabajador (login → ingreso → filtro por sucursal), stock (ingreso, salida, POS, alertas), protección de último admin, validaciones (cantidad inválida), dashboard, health check, latencia header, transferencias entre sucursales, auditoría (created_by), alertas activas. |
 
 ---
 
@@ -81,6 +85,15 @@
 | `test_eliminar_sucursal_sin_usuarios` | RF07 | `test.py:286` |
 | `test_flujo_trabajador` | RF05, RF07, RF10, RF11 | `test.py:297` |
 | `test_no_eliminar_unico_admin` | RF06 | `test.py:341` |
+| `test_transferencia_entre_sucursales` | RF17 | `test.py:357` |
+| `test_transferencia_misma_sucursal_rechazada` | RF17 | `test.py:402` |
+| `test_transferencia_stock_insuficiente` | RF17 | `test.py:417` |
+| `test_transferencia_sin_auth` | RF17, RNF03 | `test.py:433` |
+| `test_auditoria_created_by_ingreso` | RF24 | `test.py:442` |
+| `test_auditoria_created_by_sucursal` | RF24 | `test.py:453` |
+| `test_auditoria_updated_by` | RF24 | `test.py:465` |
+| `test_auditoria_created_by_transaccion` | RF24 | `test.py:476` |
+| `test_alertas_activas_endpoint` | RF23 | `test.py:488` |
 
 ---
 
@@ -110,6 +123,7 @@
 | `POST` | `/api/despachos` | Crear despacho (RF09) | Cualquiera |
 | `PATCH` | `/api/despachos/{id}/completar` | Completar despacho (RF09) | Cualquiera |
 | `GET` | `/api/sucursales` | Listar sucursales (RF07) | Cualquiera |
+| `GET` | `/api/alertas/activas` | Alertas activas y conteo (RF23) | Cualquiera |
 
 ### Solo Administradores
 
@@ -121,6 +135,7 @@
 | `POST` | `/api/sucursales` | Crear sucursal (RF07) |
 | `PUT` | `/api/sucursales/{id}` | Actualizar sucursal (RF07) |
 | `DELETE` | `/api/sucursales/{id}` | Eliminar sucursal (RF07) |
+| `POST` | `/api/transferencias` | Transferir stock entre sucursales (RF17) |
 
 ---
 
@@ -147,12 +162,13 @@
 | `PWD_SALT` | `ads40-salt-logistica` | Salt para hashing de contraseñas |
 | `WEBHOOK_URL` | `""` | URL para webhook de alertas |
 | `PROVEEDOR_EMAIL` | `proveedor@empresa.com` | Email del proveedor para alertas |
+| `GERENTE_EMAIL` | `gerente@empresa.com` | Email del gerente para alertas |
 
 ---
 
 ## 7. Estado de Validación
 
-- **Tests**: 33/33 pasan
-- **Cobertura de RF**: 16/16 implementados ✅
+- **Tests**: 42/42 pasan
+- **Cobertura de RF**: 20/20 implementados ✅
 - **Cobertura de RNF**: 8/8 implementados ✅
 - **Última verificación**: Junio 2026

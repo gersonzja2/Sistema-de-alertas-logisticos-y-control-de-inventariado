@@ -231,7 +231,10 @@ async function crearPrimeraSucursal() {
 async function cargarDashboard() {
     if (!checkAuth()) return;
     try {
-        const response = await fetch('/api/dashboard', { headers: getAuth() });
+        const sid = getFilterSucursalId();
+        let url = '/api/dashboard';
+        if (sid) url += `?sucursal_id=${sid}`;
+        const response = await fetch(url, { headers: getAuth() });
         if (!response.ok) throw new Error("Error");
         const data = await response.json();
 
@@ -291,7 +294,7 @@ async function cargarStockVivo() {
         const tbody = document.querySelector('#tabla-stock tbody');
         tbody.innerHTML = '';
         if (data.productos.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay productos registrados.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay productos registrados.</td></tr>';
             return;
         }
         data.productos.forEach(p => {
@@ -304,6 +307,7 @@ async function cargarStockVivo() {
                 <td class="stock-valor ${critico ? 'stock-bajo' : 'stock-normal'}">${p.stock}</td>
                 <td>${p.stock_minimo}</td>
                 <td><span class="badge">${p.movimientos}</span></td>
+                <td><span class="user-badge ${p.sucursal_id ? 'badge-trabajador' : 'badge-admin'}">${p.sucursal_nombre || 'Global'}</span></td>
             `;
             tbody.appendChild(tr);
         });
@@ -326,7 +330,7 @@ async function cargarHistorial() {
         const tbody = document.querySelector('#tabla-historial tbody');
         tbody.innerHTML = '';
         if (data.transacciones.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay transacciones registradas.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay transacciones registradas.</td></tr>';
             return;
         }
         data.transacciones.forEach(t => {
@@ -348,6 +352,7 @@ async function cargarHistorial() {
                 <td>${t.stock_resultante}</td>
                 <td>${prov}</td>
                 <td>${comp}</td>
+                <td><span class="user-badge ${t.sucursal_id ? 'badge-trabajador' : 'badge-admin'}">${t.sucursal_nombre || 'Global'}</span></td>
                 <td>${t.lote || t.destino || '-'}</td>
             `;
             tbody.appendChild(tr);
@@ -472,7 +477,7 @@ async function cargarDespachos() {
         if (!tbody) return;
         tbody.innerHTML = '';
         if (!data.despachos || data.despachos.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay despachos registrados.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-secondary);padding:2rem;">No hay despachos registrados.</td></tr>';
             return;
         }
         data.despachos.forEach(d => {
@@ -486,6 +491,7 @@ async function cargarDespachos() {
                 <td>${d.destino}</td>
                 <td>${d.cantidad}</td>
                 <td>${comp}</td>
+                <td><span class="user-badge ${d.sucursal_id ? 'badge-trabajador' : 'badge-admin'}">${d.sucursal_nombre || 'Global'}</span></td>
                 <td><span class="tipo-badge ${estadoClass}">${d.estado}</span></td>
                 <td>${f}</td>
                 <td>${d.estado === 'pendiente' ? `<button class="btn-sm btn-sm-success" onclick="completarDespacho(${d.id})"><i data-lucide="check" style="width:14px;height:14px;"></i> Completar</button>` : '<span style="color:var(--success);">✓ Completado</span>'}</td>
@@ -742,6 +748,53 @@ function onSucursalFilterChange() {
     }
 }
 
+// --- Exportación CSV (RF20) ---
+
+function exportarCSV(tipo) {
+    const tableId = tipo === 'stock' ? 'tabla-stock' : 'tabla-historial';
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const rows = table.querySelectorAll('tr');
+    let csv = [];
+    rows.forEach(row => {
+        const cols = row.querySelectorAll('td, th');
+        const vals = Array.from(cols).map(c => {
+            let txt = c.innerText.trim().replace(/"/g, '""');
+            return `"${txt}"`;
+        });
+        csv.push(vals.join(','));
+    });
+    if (csv.length <= 1) return;
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csv.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${tipo}_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// --- Notificaciones en UI (RF23) ---
+
+async function actualizarBadgeNotificaciones() {
+    try {
+        const resp = await fetch('/api/alertas/activas', { headers: getAuth() });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const badge = document.getElementById('stock-critico-badge');
+        if (badge) {
+            const total = data.productos_criticos + data.alertas_no_leidas;
+            if (total > 0) {
+                badge.style.display = 'inline-flex';
+                badge.textContent = total;
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+    } catch (e) { /* silent */ }
+}
+
 // --- Mensajes ---
 
 function mostrarMensaje(element, texto, color) {
@@ -770,4 +823,6 @@ window.onload = async () => {
     document.getElementById('page-title').innerText = 'Inicio';
     document.getElementById('page-subtitle').innerText = 'Panel de bienvenida y acceso rápido';
     await cargarHome();
+    actualizarBadgeNotificaciones();
+    setInterval(actualizarBadgeNotificaciones, 30000);
 };
